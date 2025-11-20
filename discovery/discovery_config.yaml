@@ -1,0 +1,178 @@
+# Discovery Configuration
+# Defines available agents and MCP servers for discovery
+
+# Agent Discovery Configuration
+agents:
+  # Static agent definitions
+  static:
+    enabled: true
+    agents:
+      - id: orchestration-agent
+        name: Orchestration Agent
+        type: orchestration
+        capabilities:
+          - workflow_orchestration
+          - api_endpoint
+          - workflow_triggering
+        endpoint: http://localhost:8000
+        status: active
+        metadata:
+          description: "Root agent that exposes A2A API and triggers workflows"
+          version: "1.0.0"
+      
+      - id: extractor-agent
+        name: Extractor Agent
+        type: extractor
+        capabilities:
+          - transaction_extraction
+          - file_parsing
+          - data_storage
+        endpoint: null  # Message-based, no direct endpoint
+        status: active
+        metadata:
+          description: "Extracts transactions from files and stores in database"
+          version: "1.0.0"
+          supported_formats:
+            - csv
+            - json
+            - xlsx
+      
+      - id: evaluator-agent
+        name: Evaluator Agent
+        type: evaluator
+        capabilities:
+          - transaction_evaluation
+          - agent_delegation
+          - workflow_coordination
+        endpoint: null
+        status: active
+        metadata:
+          description: "Delegates transaction validation to specialized agents"
+          version: "1.0.0"
+      
+      - id: scap-agent
+        name: SCAP Agent
+        type: scap
+        capabilities:
+          - sensitive_country_validation
+          - risk_assessment
+          - rule_engine
+          - llm_summarization
+        endpoint: null
+        status: active
+        metadata:
+          description: "Validates transactions for sensitive countries and flags risks"
+          version: "1.0.0"
+          rule_engine: true
+          llm_enabled: true
+
+  # Dynamic agent discovery sources
+  dynamic:
+    enabled: true
+    sources:
+      - type: storage  # Query from storage (Cosmos DB/PostgreSQL)
+        enabled: true
+        container: agent_registry  # Container/table name
+        query: "SELECT * FROM agent_registry WHERE status = 'active'"
+      
+      - type: service_bus
+        enabled: false
+        topic: agent-discovery
+        subscription: agent-registry
+        
+      - type: api
+        enabled: false
+        endpoint: http://agent-registry:8080/api/v1/agents
+        refresh_interval: 300  # seconds
+
+# MCP Server Discovery Configuration
+mcp_servers:
+  # Static MCP server definitions
+  static:
+    enabled: true
+    servers:
+      - id: filesystem-mcp
+        name: Filesystem MCP Server
+        type: filesystem
+        endpoint: stdio
+        transport: stdio
+        command: mcp-server-filesystem
+        args: []
+        capabilities:
+          - file_read
+          - file_write
+          - directory_listing
+          - file_search
+        metadata:
+          description: "MCP server for filesystem operations"
+          version: "1.0.0"
+      
+      - id: database-mcp
+        name: Database MCP Server
+        type: database
+        endpoint: stdio
+        transport: stdio
+        command: mcp-server-database
+        args: []
+        capabilities:
+          - query_execution
+          - schema_inspection
+          - transaction_management
+        metadata:
+          description: "MCP server for database operations"
+          version: "1.0.0"
+          supported_databases:
+            - postgresql
+            - cosmosdb
+      
+      - id: web-mcp
+        name: Web MCP Server
+        type: web
+        endpoint: http://localhost:8080/mcp
+        transport: http
+        capabilities:
+          - web_search
+          - web_scraping
+          - api_calls
+        metadata:
+          description: "MCP server for web operations"
+          version: "1.0.0"
+      
+      - id: github-mcp
+        name: GitHub MCP Server
+        type: github
+        endpoint: stdio
+        transport: stdio
+        command: mcp-server-github
+        args:
+          - --token
+          - ${GITHUB_TOKEN}
+        capabilities:
+          - repository_access
+          - issue_management
+          - pull_request_operations
+        metadata:
+          description: "MCP server for GitHub operations"
+          version: "1.0.0"
+
+  # Dynamic MCP server discovery sources
+  dynamic:
+    enabled: true
+    sources:
+      - type: storage
+        enabled: true
+        container: mcp_server_registry
+        query: "SELECT * FROM mcp_server_registry WHERE status = 'active'"
+      
+      - type: mcp_protocol
+        enabled: false
+        discovery_endpoint: http://mcp-registry:8080/discover
+        refresh_interval: 300
+
+# Discovery Settings
+settings:
+  cache_ttl: 300  # Cache discovery results for 5 minutes
+  refresh_on_demand: true  # Allow manual refresh
+  fallback_to_static: true  # Use static if dynamic fails
+  health_check_interval: 60  # Health check every minute
+

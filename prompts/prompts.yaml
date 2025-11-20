@@ -1,0 +1,113 @@
+# Prompt Templates Configuration
+# This file allows customization of all prompts used in the system
+
+templates:
+  # Deep Agent Perception Template
+  deep_agent_perception:
+    enabled: true
+    system_message: "You are an intelligent agent capable of analyzing complex situations and providing insightful perceptions."
+    template: |
+      You are an intelligent agent analyzing a situation. Based on the following context and goals, provide your perception:
+
+      Context:
+      ${context}
+
+      Goals:
+      ${goals}
+
+      Available Tools: ${tool_count}
+      Available Agents: ${agent_count}
+
+      Provide your perception in JSON format with:
+      - understanding: Your understanding of the current situation
+      - relevant_context: Key information from context
+      - priority: Priority level (high/medium/low)
+      - next_steps: Suggested next steps
+
+  # Deep Agent Planning Template
+  deep_agent_planning:
+    enabled: true
+    system_message: "You are a strategic planning agent that creates detailed, actionable execution plans."
+    template: |
+      Based on your perception and goals, create an execution plan.
+
+      Perception:
+      ${perception}
+
+      Goals:
+      ${goals}
+
+      Available Tools:
+      ${tools}
+
+      Available Agents:
+      ${agents}
+
+      Create a step-by-step execution plan. Each step should have:
+      - step_number: Sequential number
+      - action: What to do
+      - tool_or_agent: Which tool/agent to use
+      - description: Why this step
+      - expected_outcome: What to expect
+
+      Return as JSON array of steps.
+
+  # Deep Agent Learning Template
+  deep_agent_learning:
+    enabled: true
+    system_message: "You are a learning agent that analyzes outcomes and extracts valuable insights for continuous improvement."
+    template: |
+      Analyze the execution results and provide learning insights.
+
+      Plan:
+      ${plan}
+
+      Execution Results:
+      ${execution_results}
+
+      Provide learning insights:
+      - outcome: Overall outcome (success/partial/failure)
+      - lessons: Key lessons learned
+      - context_updates: What should be updated in context for future reference
+      - improvements: Suggestions for improvement
+
+      Return as JSON.
+
+  # SCAP Analysis Template
+  scap_analysis:
+    enabled: true
+    system_message: "You are a financial compliance analyst specializing in transaction risk assessment and sensitive country analysis."
+    template: |
+      Analyze the following flagged transactions for case ${case_id} and provide a comprehensive summary.
+
+      Flagged Transactions:
+      ${flagged_transactions}
+
+      Please provide:
+      1. Overall risk assessment
+      2. Key patterns or concerns
+      3. Recommended actions
+      4. Summary of flagged transactions by country/jurisdiction
+
+# Template Variables Documentation
+variables:
+  deep_agent_perception:
+    - context: "Formatted context string from agent state"
+    - goals: "List of agent goals"
+    - tool_count: "Number of available tools"
+    - agent_count: "Number of available agents"
+  
+  deep_agent_planning:
+    - perception: "Understanding from perception phase"
+    - goals: "List of agent goals"
+    - tools: "List of available tools with descriptions"
+    - agents: "List of available agents with capabilities"
+  
+  deep_agent_learning:
+    - plan: "Execution plan that was followed"
+    - execution_results: "Results from plan execution"
+  
+  scap_analysis:
+    - case_id: "Case identifier"
+    - flagged_transactions: "Formatted list of flagged transactions"
+

@@ -1,0 +1,32 @@
+# SCAP Agent Rules Configuration
+# Externalizable rules for sensitive country and risk validation
+
+sensitive_countries:
+  - "IR"  # Iran
+  - "KP"  # North Korea
+  - "SY"  # Syria
+  - "CU"  # Cuba
+  - "RU"  # Russia (example)
+  - "CN"  # China (example)
+
+sensitive_jurisdictions:
+  - "OFFSHORE"
+  - "TAX_HAVEN"
+  - "HIGH_RISK"
+
+risk_threshold: 1000.0
+
+# Additional rule configurations
+rules:
+  - name: "sensitive_country_check"
+    enabled: true
+    description: "Flag transactions involving sensitive countries"
+  
+  - name: "amount_threshold_check"
+    enabled: true
+    description: "Flag transactions exceeding amount threshold"
+  
+  - name: "jurisdiction_check"
+    enabled: true
+    description: "Flag transactions involving sensitive jurisdictions"
+
