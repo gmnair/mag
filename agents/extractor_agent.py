@@ -15,33 +15,43 @@ logger = logging.getLogger(__name__)
 class ExtractorAgent(BaseAgent):
     """Extractor agent using Deep Agent pattern."""
     
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from a2a.server.events import QueueManager
+        from a2a.server.tasks import DatabaseTaskStore
+        self.queue_manager = QueueManager(
+            queue_type="azure_service_bus",
+            connection_string=Config.ASB_CONNECTION_STRING,
+            topic_name=Config.ASB_TOPIC_NAME,
+            subscription_name=Config.ASB_SUBSCRIPTION_NAME,
+            agent_id=self.agent_id
+        )
+        self.task_store = DatabaseTaskStore(
+            db_type="cosmos" if Config.COSMOS_ENDPOINT else "postgres",
+            connection_string=Config.COSMOS_ENDPOINT if Config.COSMOS_ENDPOINT else Config.POSTGRES_CONNECTION_STRING,
+            agent_id=self.agent_id
+        )
+
     async def execute_task_from_state(self, state: DeepAgentState) -> Dict[str, Any]:
-        """Extract transactions from file and store in Cosmos DB."""
+        """Extract transactions from file and store in Cosmos DB, with Langgraph flow."""
+        task_id = state.get("task_id", "")
+        # Start Langgraph flow: save initial state
+        self.save_langgraph_state(task_id, state)
         try:
             context = state.get("context", {})
             payload = context.get("payload", {})
             case_id = payload.get("case_id") or state.get("case_id")
             file_path = payload.get("file_path")
-            
             logger.info(f"Extracting transactions for case {case_id} from {file_path}")
-            
-            # Load state
             conversation_id = state.get("conversation_id") or case_id
             workflow_state = self.state_manager.load_state(
                 Config.ORCHESTRATION_AGENT_ID,
                 conversation_id
             )
-            
             if not workflow_state:
                 raise ValueError(f"State not found for case {case_id}")
-            
-            # Extract transactions from file
             transactions = await self._extract_transactions(file_path)
-            
-            # Store transactions in Cosmos DB
             self.cosmos_client.save_transactions(case_id, transactions)
-            
-            # Update workflow state
             self.state_manager.update_state(
                 Config.ORCHESTRATION_AGENT_ID,
                 conversation_id,
@@ -50,9 +60,18 @@ class ExtractorAgent(BaseAgent):
                     "status": "extracted"
                 }
             )
-            
-            # Send message to evaluator agent using a2a-sdk types
-            task_id = state.get("task_id", "")
+            # Save task to TaskStore
+            self.task_store.save_task(
+                self.agent_id,
+                task_id,
+                {
+                    "task_id": task_id,
+                    "case_id": case_id,
+                    "file_path": file_path,
+                    "status": "extracted",
+                    "conversation_id": conversation_id
+                }
+            )
             evaluator_message = create_a2a_message(
                 message_id=f"{task_id}_to_evaluator",
                 role="agent",
@@ -60,7 +79,6 @@ class ExtractorAgent(BaseAgent):
                 context_id=conversation_id,
                 task_id=task_id
             )
-            
             evaluator_wrapper = A2AMessageWrapper(
                 message=evaluator_message,
                 from_agent=self.agent_id,
@@ -71,19 +89,21 @@ class ExtractorAgent(BaseAgent):
                     "action": "evaluate_transactions"
                 }
             )
-            
-            await self.asb_client.send_message(evaluator_wrapper, self.agent_id)
-            
+            # Use QueueManager to send message
+            await self.queue_manager.send_message(evaluator_wrapper)
             logger.info(f"Extracted {len(transactions)} transactions for case {case_id}")
-            
-            return {
+            result = {
                 "status": "success",
                 "transactions_extracted": len(transactions),
                 "case_id": case_id
             }
-            
+            # End Langgraph flow: save final state
+            self.save_langgraph_state(task_id, state)
+            return result
         except Exception as e:
             logger.error(f"Error extracting transactions: {str(e)}", exc_info=True)
+            # End Langgraph flow: save error state
+            self.save_langgraph_state(task_id, state)
             raise
     
     async def _extract_transactions(self, file_path: str) -> List[Dict[str, Any]]:

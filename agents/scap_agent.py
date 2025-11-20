@@ -108,42 +108,47 @@ class SCAPAgent(BaseAgent):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.rule_engine = RuleEngine()
+        from a2a.server.events import QueueManager
+        from a2a.server.tasks import DatabaseTaskStore
+        self.queue_manager = QueueManager(
+            queue_type="azure_service_bus",
+            connection_string=Config.ASB_CONNECTION_STRING,
+            topic_name=Config.ASB_TOPIC_NAME,
+            subscription_name=Config.ASB_SUBSCRIPTION_NAME,
+            agent_id=self.agent_id
+        )
+        self.task_store = DatabaseTaskStore(
+            db_type="cosmos" if Config.COSMOS_ENDPOINT else "postgres",
+            connection_string=Config.COSMOS_ENDPOINT if Config.COSMOS_ENDPOINT else Config.POSTGRES_CONNECTION_STRING,
+            agent_id=self.agent_id
+        )
     
     async def execute_task_from_state(self, state: DeepAgentState) -> Dict[str, Any]:
-        """Validate transactions for sensitive countries and flag risks."""
+        """Validate transactions for sensitive countries and flag risks, with Langgraph flow."""
+        task_id = state.get("task_id", "")
+        # Start Langgraph flow: save initial state
+        self.save_langgraph_state(task_id, state)
         try:
             context = state.get("context", {})
             payload = context.get("payload", {})
             case_id = payload.get("case_id") or state.get("case_id")
             transactions = payload.get("transactions", [])
-            
             logger.info(f"SCAP validating {len(transactions)} transactions for case {case_id}")
-            
-            # Load workflow state
             conversation_id = state.get("conversation_id") or case_id
             workflow_state = self.state_manager.load_state(
                 Config.ORCHESTRATION_AGENT_ID,
                 conversation_id
             )
-            
             if not workflow_state:
                 raise ValueError(f"State not found for case {case_id}")
-            
-            # Evaluate each transaction
             scap_results = []
             for transaction in transactions:
                 result = self.rule_engine.evaluate_transaction(transaction)
                 scap_results.append(result)
-            
-            # Filter flagged transactions
             flagged_transactions = [
                 r for r in scap_results if r.get("risk_flagged", False)
             ]
-            
-            # Generate summary using LLM (via Deep Agent's LLM)
             summary = await self._generate_summary(flagged_transactions, case_id, state)
-            
-            # Prepare results
             results = {
                 "case_id": case_id,
                 "total_transactions": len(transactions),
@@ -152,8 +157,6 @@ class SCAPAgent(BaseAgent):
                 "summary": summary,
                 "timestamp": state.get("timestamp", "")
             }
-            
-            # Update workflow state
             self.state_manager.update_state(
                 Config.ORCHESTRATION_AGENT_ID,
                 conversation_id,
@@ -163,16 +166,29 @@ class SCAPAgent(BaseAgent):
                     "status": "completed"
                 }
             )
-            
+            # Save task to TaskStore
+            self.task_store.save_task(
+                self.agent_id,
+                task_id,
+                {
+                    "task_id": task_id,
+                    "case_id": case_id,
+                    "status": "completed",
+                    "conversation_id": conversation_id
+                }
+            )
             logger.info(f"SCAP completed validation for case {case_id}: {len(flagged_transactions)} flagged")
-            
-            return {
+            result = {
                 "status": "success",
                 "results": results
             }
-            
+            # End Langgraph flow: save final state
+            self.save_langgraph_state(task_id, state)
+            return result
         except Exception as e:
             logger.error(f"Error in SCAP validation: {str(e)}", exc_info=True)
+            # End Langgraph flow: save error state
+            self.save_langgraph_state(task_id, state)
             raise
     
     async def _generate_summary(

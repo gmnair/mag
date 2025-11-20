@@ -14,6 +14,19 @@ logger = logging.getLogger(__name__)
 
 
 class BaseAgent(ABC):
+    async def langgraph_flow(self, state_id: str, langgraph_state: Dict[str, Any]):
+        """Example Langgraph flow: save and restore agent-isolated state."""
+        # Save the current Langgraph state (isolated by agent_id)
+        self.save_langgraph_state(state_id, langgraph_state)
+
+        # Later, retrieve the Langgraph state for this agent and state_id
+        restored_state = self.get_langgraph_state(state_id)
+        if restored_state:
+            # Continue processing with the retrieved state
+            logger.info(f"{self.agent_id} restored Langgraph state for {state_id}")
+            # ... agent-specific logic ...
+        else:
+            logger.warning(f"{self.agent_id} could not find Langgraph state for {state_id}")
     """Base class for all agents using Deep Agent pattern."""
     
     def __init__(
@@ -314,3 +327,16 @@ class BaseAgent(ABC):
         """Stop the agent message listener."""
         self.running = False
         logger.info(f"{self.agent_id} stopping...")
+    
+    # When saving Langgraph state, always use agent_id as part of the key
+    # This ensures agents only fetch their own state
+    def save_langgraph_state(self, state_id: str, state: Dict[str, Any]):
+        self.cosmos_client.save_state(self.agent_id, state_id, state)
+
+    def get_langgraph_state(self, state_id: str) -> Optional[Dict[str, Any]]:
+        return self.cosmos_client.get_state(self.agent_id, state_id)
+
+    # Example usage in agent logic:
+    # self.save_langgraph_state(task_id, langgraph_state)
+    # state = self.get_langgraph_state(task_id)
+    # This pattern works for both CosmosDB and PostgreSQL backends
