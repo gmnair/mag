@@ -2,7 +2,7 @@
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 from shared.asb_client import ASBClient
 from shared.storage_client import StorageClient
@@ -256,14 +256,14 @@ class BaseAgent(ABC):
             logger.error(f"Error sending error response: {str(e)}")
     
     async def start(self):
-        """Start the agent message listener."""
+        """Start the agent message listener using shared subscription."""
         self.running = True
-        logger.info(f"{self.agent_id} starting...")
+        logger.info(f"{self.agent_id} starting with shared subscription...")
         
-        # Ensure subscription exists
-        await self.asb_client.ensure_subscription_exists(self.agent_id)
+        # Ensure shared subscription exists (agent_id is optional now)
+        await self.asb_client.ensure_subscription_exists()
         
-        # Start receiving messages
+        # Start receiving messages from shared subscription
         while self.running:
             try:
                 await self.asb_client.receive_messages(

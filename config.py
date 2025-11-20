@@ -11,6 +11,8 @@ class Config:
     # Azure Service Bus Configuration
     ASB_CONNECTION_STRING: str = os.getenv("ASB_CONNECTION_STRING", "")
     ASB_TOPIC_NAME: str = os.getenv("ASB_TOPIC_NAME", "a2a-messages")
+    # Shared subscription name (all agents will listen on this subscription and filter by 'to_agent')
+    ASB_SHARED_SUBSCRIPTION_NAME: str = os.getenv("ASB_SHARED_SUBSCRIPTION_NAME", "agents-shared-subscription")
     
     # Storage Configuration (PostgreSQL or Cosmos DB)
     POSTGRES_CONNECTION_STRING: str = os.getenv("POSTGRES_CONNECTION_STRING", "")

@@ -47,7 +47,8 @@ class ASBClient:
                         "to_agent": message.to_agent,
                         "agent_id": agent_id,
                         "conversation_id": message.conversation_id or "",
-                        "correlation_id": message.correlation_id or ""
+                        "correlation_id": message.correlation_id or "",
+                        "message_type": "a2a_message"
                     }
                 )
                 
@@ -61,16 +62,16 @@ class ASBClient:
     async def receive_messages(
         self,
         agent_id: str,
-        message_handler: Callable[[A2AMessage], Any],
+        message_handler: Callable[[Any], Any],
         max_wait_time: int = 5
     ):
-        """Receive and process messages intended for this agent."""
+        """Receive and process messages intended for this agent using shared subscription."""
         try:
             async with self.client:
-                # Create subscription for this agent if it doesn't exist
-                subscription_name = f"{agent_id}-subscription"
-                
-                # Get receiver for subscription
+                # Use shared subscription for all agents
+                subscription_name = Config.ASB_SHARED_SUBSCRIPTION_NAME
+
+                # Get receiver for the shared subscription
                 receiver = self.client.get_subscription_receiver(
                     topic_name=self.topic_name,
                     subscription_name=subscription_name,
@@ -87,8 +88,9 @@ class ASBClient:
                             import json
                             data = json.loads(message_body)
                             
-                            # Check if message is intended for this agent
+                            # Check if message is intended for this agent using the to_agent field
                             to_agent = data.get("to_agent", "")
+                            
                             if to_agent == agent_id:
                                 logger.info(f"Received message for {agent_id} from {data.get('from_agent', 'unknown')}")
                                 # Handle message (can be async or sync)
@@ -98,39 +100,52 @@ class ASBClient:
                                     message_handler(data)
                                 await receiver.complete_message(message)
                             else:
-                                # Release message if not intended for this agent
+                                # Not intended for this agent; abandon so another consumer may process it
+                                logger.debug(f"Agent {agent_id} ignoring message intended for {to_agent}")
                                 await receiver.abandon_message(message)
                                 
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Error decoding message JSON: {str(e)}")
+                            await receiver.dead_letter_message(message, reason="Invalid JSON format")
                         except Exception as e:
                             logger.error(f"Error processing message: {str(e)}")
-                            await receiver.dead_letter_message(message)
+                            await receiver.dead_letter_message(message, reason=f"Processing error: {str(e)}")
                             
         except Exception as e:
             logger.error(f"Error receiving messages: {str(e)}")
             raise
     
-    async def ensure_subscription_exists(self, agent_id: str):
-        """Ensure subscription exists for the agent."""
+    async def ensure_subscription_exists(self, agent_id: Optional[str] = None):
+        """Ensure the shared subscription exists (agent_id is ignored).
+
+        All agents will use the same shared subscription and filter messages by 'to_agent' field.
+        """
         try:
             async with ServiceBusAdministrationClient.from_connection_string(
                 self.connection_string
             ) as admin_client:
-                subscription_name = f"{agent_id}-subscription"
-                
+                subscription_name = Config.ASB_SHARED_SUBSCRIPTION_NAME
+
                 try:
-                    await admin_client.get_subscription(
+                    subscription = await admin_client.get_subscription(
                         topic_name=self.topic_name,
                         subscription_name=subscription_name
                     )
-                    logger.info(f"Subscription {subscription_name} already exists")
+                    logger.info(f"Shared subscription {subscription_name} already exists")
+                    
+                    # Optionally add server-side filter for better performance
+                    # Currently using client-side filtering for simplicity
+                    
                 except Exception:
-                    # Create subscription with filter for this agent
+                    # Create the shared subscription
                     await admin_client.create_subscription(
                         topic_name=self.topic_name,
-                        subscription_name=subscription_name
+                        subscription_name=subscription_name,
+                        # No server-side filter - all agents receive all messages and filter client-side
                     )
-                    logger.info(f"Created subscription {subscription_name}")
+                    logger.info(f"Created shared subscription {subscription_name}")
                     
         except Exception as e:
             logger.warning(f"Could not ensure subscription exists: {str(e)}")
+            # Continue without subscription - messages will be handled by other agents
 
