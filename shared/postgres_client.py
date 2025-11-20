@@ -9,6 +9,7 @@ from psycopg2.extensions import register_adapter
 from psycopg2 import sql
 from config import Config
 from shared.storage_client import StorageClient
+from shared.conversation_store import ConversationStore
 
 logger = logging.getLogger(__name__)
 
@@ -335,4 +336,48 @@ class PostgreSQLClient(StorageClient):
         if hasattr(self, 'pool'):
             self.pool.closeall()
             logger.info("PostgreSQL connection pool closed")
+
+
+class PostgreSQLConversationStore(ConversationStore):
+    def __init__(self):
+        self.conn = psycopg2.connect(Config.POSTGRES_CONNECTION_STRING)
+        self._ensure_table()
+
+    def _ensure_table(self):
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id UUID PRIMARY KEY,
+                    context_id TEXT NOT NULL,
+                    user TEXT NOT NULL,
+                    message JSONB NOT NULL
+                )
+            """)
+            self.conn.commit()
+
+    def save_conversation(self, context_id: str, user: str, message: Dict[str, Any]):
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO conversations (id, context_id, user, message) VALUES (%s, %s, %s, %s)",
+                (str(uuid.uuid4()), context_id, user, psycopg2.extras.Json(message))
+            )
+            self.conn.commit()
+        logger.info(f"Saved message for context {context_id}, user {user} in PostgreSQL")
+
+    def get_conversation(self, context_id: str, user: Optional[str] = None) -> List[Dict[str, Any]]:
+        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            if user:
+                cur.execute("SELECT message FROM conversations WHERE context_id=%s AND user=%s", (context_id, user))
+            else:
+                cur.execute("SELECT message FROM conversations WHERE context_id=%s", (context_id,))
+            rows = cur.fetchall()
+        logger.info(f"Retrieved {len(rows)} messages for context {context_id}, user {user} from PostgreSQL")
+        return [row["message"] for row in rows]
+
+    def summarize_conversation(self, context_id: str, user: Optional[str] = None) -> str:
+        messages = self.get_conversation(context_id, user)
+        summary = f"Summary for context {context_id}, user {user}: {len(messages)} messages."
+        # Optionally, use LLM or custom logic for richer summary
+        logger.info(f"Summarized conversation for context {context_id}, user {user}")
+        return summary
 

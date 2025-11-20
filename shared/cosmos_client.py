@@ -5,7 +5,9 @@ from azure.cosmos import CosmosClient, PartitionKey
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from config import Config
 from shared.storage_client import StorageClient
+from shared.conversation_store import ConversationStore
 import json
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -208,4 +210,48 @@ class CosmosDBClient(StorageClient):
         except Exception as e:
             logger.error(f"Error retrieving transactions: {str(e)}")
             return []
+    
+
+class CosmosDBConversationStore(ConversationStore):
+    def __init__(self):
+        self.client = CosmosClient(Config.COSMOS_ENDPOINT, Config.COSMOS_KEY)
+        self.database_name = getattr(Config, "COSMOS_DATABASE", "conversations")
+        self.container_name = getattr(Config, "COSMOS_CONTAINER", "messages")
+        self.database = self.client.create_database_if_not_exists(self.database_name)
+        self.container = self.database.create_container_if_not_exists(
+            id=self.container_name,
+            partition_key=PartitionKey(path="/context_id"),
+            offer_throughput=400
+        )
+
+    def save_conversation(self, context_id: str, user: str, message: Dict[str, Any]):
+        doc = {
+            "id": str(uuid.uuid4()),
+            "context_id": context_id,
+            "user": user,
+            "message": message
+        }
+        self.container.upsert_item(doc)
+        logger.info(f"Saved message for context {context_id}, user {user} in Cosmos DB")
+
+    def get_conversation(self, context_id: str, user: Optional[str] = None) -> List[Dict[str, Any]]:
+        query = f"SELECT * FROM c WHERE c.context_id=@context_id"
+        params = [{"name": "@context_id", "value": context_id}]
+        if user:
+            query += " AND c.user=@user"
+            params.append({"name": "@user", "value": user})
+        items = list(self.container.query_items(
+            query=query,
+            parameters=params,
+            enable_cross_partition_query=True
+        ))
+        logger.info(f"Retrieved {len(items)} messages for context {context_id}, user {user} from Cosmos DB")
+        return [item["message"] for item in items]
+
+    def summarize_conversation(self, context_id: str, user: Optional[str] = None) -> str:
+        messages = self.get_conversation(context_id, user)
+        summary = f"Summary for context {context_id}, user {user}: {len(messages)} messages."
+        # Optionally, use LLM or custom logic for richer summary
+        logger.info(f"Summarized conversation for context {context_id}, user {user}")
+        return summary
 

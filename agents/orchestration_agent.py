@@ -45,6 +45,7 @@ class OrchestrationAgent(BaseAgent):
         # Setup QueueManager for ASB
         from a2a.server.events import QueueManager
         from a2a.server.tasks import DatabaseTaskStore
+        from shared.conversation_store import create_conversation_store
         self.queue_manager = QueueManager(
             queue_type="azure_service_bus",
             connection_string=Config.ASB_CONNECTION_STRING,
@@ -58,11 +59,13 @@ class OrchestrationAgent(BaseAgent):
             connection_string=Config.COSMOS_ENDPOINT if Config.COSMOS_ENDPOINT else Config.POSTGRES_CONNECTION_STRING,
             agent_id=self.agent_id
         )
+        # Setup ConversationStore for Cosmos/Postgres
+        self.conversation_store = create_conversation_store()
         self._setup_a2a_routes()
     def _setup_a2a_routes(self):
         """Setup A2A-compliant routes using a2a-sdk."""
         @self.a2a_app.method()
-        async def transaction_review(case_id: str, file_path: str):
+        async def transaction_review(case_id: str, file_path: str, user: str = "system"):
             """A2A API endpoint to trigger transaction review workflow."""
             try:
                 conversation_id = str(uuid.uuid4())
@@ -84,6 +87,13 @@ class OrchestrationAgent(BaseAgent):
                         "conversation_id": conversation_id
                     }
                 )
+                # Save initial conversation
+                self.conversation_store.save_conversation(conversation_id, user, {
+                    "event": "transaction_review_initiated",
+                    "case_id": case_id,
+                    "file_path": file_path,
+                    "task_id": task_id
+                })
                 extractor_message = create_a2a_message(
                     message_id=task_id,
                     role="agent",
@@ -103,12 +113,15 @@ class OrchestrationAgent(BaseAgent):
                 )
                 # Use QueueManager to send message
                 await self.queue_manager.send_message(extractor_wrapper)
-                logger.info(f"A2A workflow initiated for case {case_id}")
+                # Summarize conversation after outcome
+                summary = self.conversation_store.summarize_conversation(conversation_id, user)
+                logger.info(f"A2A workflow initiated for case {case_id}. Conversation summary: {summary}")
                 return {
                     "status": "initiated",
                     "case_id": case_id,
                     "conversation_id": conversation_id,
-                    "task_id": task_id
+                    "task_id": task_id,
+                    "conversation_summary": summary
                 }
             except Exception as e:
                 logger.error(f"Error initiating A2A workflow: {str(e)}", exc_info=True)
